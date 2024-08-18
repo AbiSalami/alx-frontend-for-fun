@@ -1,60 +1,106 @@
 #!/usr/bin/python3
-
-"""
-Markdown to HTML converter.
-
-This script takes two arguments: the input Markdown file and the output HTML file.
-It converts the Markdown content to HTML and writes it to the output file.
-
-Usage: ./markdown2html.py README.md README.html
-"""
+"""Markdown to HTML"""
 
 import sys
-import os
+import os.path
+import re
+import hashlib
 
-def markdown_to_html(markdown_file, html_file):
-    """
-    Convert Markdown content to HTML.
+def process_line(line):
+    # Bold syntax: **text**
+    line = line.replace('**', '<b>', 1).replace('**', '</b>', 1)
 
-    Args:
-        markdown_file (str): Input Markdown file
-        html_file (str): Output HTML file
+    # Italic syntax: __text__
+    line = line.replace('__', '<em>', 1).replace('__', '</em>', 1)
 
-    Returns:
-        None
-    """
-    with open(markdown_file, 'r') as f:
-        markdown_content = f.read()
+    # MD5 hash: [[text]]
+    md5_matches = re.findall(r'\[\[.+?\]\]', line)
+    if md5_matches:
+        for match in md5_matches:
+            text = match[2:-2]
+            hashed = hashlib.md5(text.encode()).hexdigest()
+            line = line.replace(match, hashed)
 
-    html_content = ''
-    lines = markdown_content.split('\n')
-    for line in lines:
-        if line.startswith('#'):
-            heading_level = len(line) - len(line.lstrip('#'))
-            html_content += f'<h{heading_level}>{line.strip("# ").strip()}</h{heading_level}>'
-        elif line.startswith('- ') or line.startswith('* '):
-            if not html_content.endswith('</ul>\n') and not html_content.endswith('</ol>\n'):
-                html_content += '<ul>\n' if line.startswith('- ') else '<ol>\n'
-            html_content += f'<li>{line.strip("- * ").strip()}</li>\n'
-        else:
-            if html_content.endswith('</ul>\n') or html_content.endswith('</ol>\n'):
-                html_content = html_content.rstrip('</ul>\n</ol>\n') + '</ul>\n' if line.startswith('- ') else '</ol>\n'
-            html_content += f'<p>{line.replace("\n", "<br/>\n")}</p>\n'
+    # Remove 'C' or 'c': ((text))
+    remove_c_matches = re.findall(r'\(\(.+?\)\)', line)
+    if remove_c_matches:
+        for match in remove_c_matches:
+            text = ''.join(c for c in match[2:-2] if c.lower() != 'c')
+            line = line.replace(match, text)
 
-    with open(html_file, 'w') as f:
-        f.write(html_content)
+    return line
+
+def convert_markdown_to_html(input_file, output_file):
+    with open(input_file, 'r') as read, open(output_file, 'w') as html:
+        unordered_start, ordered_start, paragraph = False, False, False
+
+        for line in read:
+            line = process_line(line)
+            length = len(line)
+            headings = line.lstrip('#')
+            heading_num = length - len(headings)
+            unordered = line.lstrip('-')
+            unordered_num = length - len(unordered)
+            ordered = line.lstrip('*')
+            ordered_num = length - len(ordered)
+
+            # Headings
+            if 1 <= heading_num <= 6:
+                line = '<h{}>{}</h{}>\n'.format(heading_num, headings.strip(), heading_num)
+
+            # Unordered lists
+            if unordered_num:
+                if not unordered_start:
+                    html.write('<ul>\n')
+                    unordered_start = True
+                line = '<li>{}</li>\n'.format(unordered.strip())
+            if unordered_start and not unordered_num:
+                html.write('</ul>\n')
+                unordered_start = False
+
+            # Ordered lists
+            if ordered_num:
+                if not ordered_start:
+                    html.write('<ol>\n')
+                    ordered_start = True
+                line = '<li>{}</li>\n'.format(ordered.strip())
+            if ordered_start and not ordered_num:
+                html.write('</ol>\n')
+                ordered_start = False
+
+            # Paragraphs
+            if not (heading_num or unordered_num or ordered_num):
+                if not paragraph and length > 1:
+                    html.write('<p>\n')
+                    paragraph = True
+                elif length > 1:
+                    html.write('<br/>\n')
+                elif paragraph:
+                    html.write('</p>\n')
+                    paragraph = False
+
+            if length > 1:
+                html.write(line)
+
+        if unordered_start:
+            html.write('</ul>\n')
+        if ordered_start:
+            html.write('</ol>\n')
+        if paragraph:
+            html.write('</p>\n')
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        sys.stderr.write(f'Usage: {sys.argv[0]} README.md README.html\n')
-        sys.exit(1)
+    if len(sys.argv) != 3:
+        print('Usage: ./markdown2html.py README.md README.html', file=sys.stderr)
+        exit(1)
 
-    markdown_file = sys.argv[1]
-    html_file = sys.argv[2]
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
 
-    if not os.path.exists(markdown_file):
-        sys.stderr.write(f'Missing {markdown_file}\n')
-        sys.exit(1)
+    if not os.path.isfile(input_file):
+        print(f'Missing {input_file}', file=sys.stderr)
+        exit(1)
 
-    markdown_to_html(markdown_file, html_file)
-    sys.exit(0)
+    convert_markdown_to_html(input_file, output_file)
+    exit(0)
+
